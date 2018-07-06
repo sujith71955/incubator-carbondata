@@ -21,6 +21,7 @@ import java.math.BigInteger;
 import org.apache.spark.memory.MemoryMode;
 import org.apache.spark.sql.ColumnVectorFactory;
 import org.apache.spark.sql.catalyst.InternalRow;
+import org.apache.spark.sql.execution.vectorized.Dictionary;
 import org.apache.spark.sql.execution.vectorized.WritableColumnVector;
 import org.apache.spark.sql.types.*;
 import org.apache.spark.sql.vectorized.ColumnVector;
@@ -85,6 +86,10 @@ public class CarbonVectorProxy {
         return columnarBatch.column(ordinal);
     }
 
+    public WritableColumnVector getColumnVector(int ordinal) {
+        return writableColumnVectors[ordinal];
+    }
+
     /**
      * Resets this column for writing. The currently stored values are no longer accessible.
      */
@@ -135,49 +140,50 @@ public class CarbonVectorProxy {
      * @param value
      */
     public void putRowToColumnBatch(int rowId, Object value, int offset) {
-            org.apache.spark.sql.types.DataType t = dataType(offset);
-            if (null == value) {
-                putNull(rowId, offset);
-            } else {
-                if (t == org.apache.spark.sql.types.DataTypes.BooleanType) {
-                    putBoolean(rowId, (boolean) value, offset);
-                } else if (t == org.apache.spark.sql.types.DataTypes.ByteType) {
-                    putByte(rowId, (byte) value, offset);
-                } else if (t == org.apache.spark.sql.types.DataTypes.ShortType) {
-                    putShort(rowId, (short) value, offset);
-                } else if (t == org.apache.spark.sql.types.DataTypes.IntegerType) {
-                    putInt(rowId, (int) value, offset);
-                } else if (t == org.apache.spark.sql.types.DataTypes.LongType) {
-                    putLong(rowId, (long) value, offset);
-                } else if (t == org.apache.spark.sql.types.DataTypes.FloatType) {
-                    putFloat(rowId, (float) value, offset);
-                } else if (t == org.apache.spark.sql.types.DataTypes.DoubleType) {
-                    putDouble(rowId, (double) value, offset);
-                } else if (t == org.apache.spark.sql.types.DataTypes.StringType) {
-                    UTF8String v = (UTF8String) value;
-                    putByteArray(rowId, v.getBytes(), offset);
-                } else if (t instanceof DecimalType) {
-                    DecimalType dt = (DecimalType) t;
-                    Decimal d = Decimal.fromDecimal(value);
-                    if (dt.precision() <= Decimal.MAX_INT_DIGITS()) {
-                        putInt(rowId, (int) d.toUnscaledLong(), offset);
-                    } else if (dt.precision() <= Decimal.MAX_LONG_DIGITS()) {
-                        putLong(rowId, d.toUnscaledLong(), offset);
-                    } else {
-                        final BigInteger integer = d.toJavaBigDecimal().unscaledValue();
-                        byte[] bytes = integer.toByteArray();
-                        putByteArray(rowId, bytes, 0, bytes.length, offset);
-                    }
-                } else if (t instanceof CalendarIntervalType) {
-                    CalendarInterval c = (CalendarInterval) value;
-                    writableColumnVectors[offset].getChild(0).putInt(rowId, c.months);
-                    writableColumnVectors[offset].getChild(1).putLong(rowId, c.microseconds);
-                } else if (t instanceof org.apache.spark.sql.types.DateType) {
-                    putInt(rowId, (int) value, offset);
-                } else if (t instanceof org.apache.spark.sql.types.TimestampType) {
-                    putLong(rowId, (long) value, offset);
+        org.apache.spark.sql.types.DataType t = dataType(offset);
+        if (null == value) {
+            putNull(rowId, offset);
+        } else {
+            String valueToString = String.valueOf(value);
+            if (t == org.apache.spark.sql.types.DataTypes.BooleanType) {
+                putBoolean(rowId, Boolean.parseBoolean(valueToString), offset);
+            } else if (t == org.apache.spark.sql.types.DataTypes.ByteType) {
+                putByte(rowId, Byte.parseByte(valueToString), offset);
+            } else if (t == org.apache.spark.sql.types.DataTypes.ShortType) {
+                putShort(rowId, Short.parseShort(valueToString), offset);
+            } else if (t == org.apache.spark.sql.types.DataTypes.IntegerType) {
+                putInt(rowId, Integer.parseInt(valueToString), offset);
+            } else if (t == org.apache.spark.sql.types.DataTypes.LongType) {
+                putLong(rowId, Long.parseLong(valueToString), offset);
+            } else if (t == org.apache.spark.sql.types.DataTypes.FloatType) {
+                putFloat(rowId, Float.parseFloat(valueToString), offset);
+            } else if (t == org.apache.spark.sql.types.DataTypes.DoubleType) {
+                putDouble(rowId, Double.parseDouble(valueToString), offset);
+            } else if (t == org.apache.spark.sql.types.DataTypes.StringType) {
+                UTF8String v = UTF8String.fromString(valueToString);
+                putByteArray(rowId, v.getBytes(), offset);
+            } else if (t instanceof org.apache.spark.sql.types.DecimalType) {
+                DecimalType dt = (DecimalType) t;
+                Decimal d = Decimal.fromDecimal(valueToString);
+                if (dt.precision() <= Decimal.MAX_INT_DIGITS()) {
+                    putInt(rowId, (int) d.toUnscaledLong(), offset);
+                } else if (dt.precision() <= Decimal.MAX_LONG_DIGITS()) {
+                    putLong(rowId, d.toUnscaledLong(), offset);
+                } else {
+                    final BigInteger integer = d.toJavaBigDecimal().unscaledValue();
+                    byte[] bytes = integer.toByteArray();
+                    putByteArray(rowId, bytes, 0, bytes.length, offset);
                 }
+            } else if (t instanceof CalendarIntervalType) {
+                CalendarInterval c = CalendarInterval.fromString(valueToString);
+                writableColumnVectors[offset].getChild(0).putInt(rowId, c.months);
+                writableColumnVectors[offset].getChild(1).putLong(rowId, c.microseconds);
+            } else if (t instanceof org.apache.spark.sql.types.DateType) {
+                putInt(rowId, Integer.parseInt(valueToString), offset);
+            } else if (t instanceof org.apache.spark.sql.types.TimestampType) {
+                putLong(rowId, Long.parseLong(valueToString), offset);
             }
+        }
     }
 
     public void putBoolean(int rowId, boolean value, int ordinal) {
@@ -194,6 +200,10 @@ public class CarbonVectorProxy {
 
     public void putInt(int rowId, int value, int ordinal) {
         writableColumnVectors[ordinal].putInt(rowId, (int) value);
+    }
+
+    public void putDictionaryInt(int rowId, int value, int ordinal) {
+        writableColumnVectors[ordinal].getDictionaryIds().putInt(rowId, (int) value);
     }
 
     public void putFloat(int rowId, float value, int ordinal) {
@@ -245,8 +255,28 @@ public class CarbonVectorProxy {
         writableColumnVectors[ordinal].putNulls(rowId, count);
     }
 
+    public void putNotNull(int rowId, int ordinal) {
+        writableColumnVectors[ordinal].putNotNull(rowId);
+    }
+
+    public void putNotNulls(int rowId, int count, int ordinal) {
+        writableColumnVectors[ordinal].putNotNulls(rowId, count);
+    }
+
     public boolean isNullAt(int rowId, int ordinal) {
         return writableColumnVectors[ordinal].isNullAt(rowId);
+    }
+
+    public boolean hasDictionary(int ordinal) {
+        return writableColumnVectors[ordinal].hasDictionary();
+    }
+
+    public void setDictionary(Object dictionary, int ordinal) {
+        if (dictionary instanceof Dictionary) {
+            writableColumnVectors[ordinal].setDictionary((Dictionary) dictionary);
+        } else {
+            writableColumnVectors[ordinal].setDictionary(null);
+        }
     }
 
     public DataType dataType(int ordinal) {
